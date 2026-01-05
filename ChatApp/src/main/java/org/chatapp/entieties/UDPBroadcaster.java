@@ -7,15 +7,16 @@ public class UDPBroadcaster extends Thread {
     private static final int BROADCAST_PORT = 8888;
     private DatagramSocket socket;
     private boolean running;
-    private String roomName;
-    private String hostName;
-    private int tcpPort;
+    private final String roomName;
+    private final String hostName;
+    private final int tcpPort;
 
     public UDPBroadcaster(String roomName, String hostName, int tcpPort) {
         this.roomName = roomName;
         this.hostName = hostName;
         this.tcpPort = tcpPort;
         this.running = true;
+        setDaemon(true); // Marchez ca daemon thread pentru a permite terminarea aplicatiei
     }
 
     @Override
@@ -34,16 +35,20 @@ public class UDPBroadcaster extends Thread {
             System.out.println("Starting UDP broadcast on port " + BROADCAST_PORT);
 
             while (running) {
-                socket.send(packet);
-                System.out.println("Broadcasting: " + message);
-                Thread.sleep(2000); // Interval de 2 secunde
+                try {
+                    socket.send(packet);
+                    System.out.println("Broadcasting: " + message);
+                    Thread.sleep(2000); // Interval de 2 secunde
+                } catch (InterruptedException e) {
+                    System.out.println("Broadcaster interrupted");
+                    running = false;
+                    break;
+                }
             }
         } catch (IOException e) {
             if (running) {
                 System.err.println("Broadcast error: " + e.getMessage());
             }
-        } catch (InterruptedException e) {
-            System.out.println("Broadcaster interrupted");
         } finally {
             if (socket != null && !socket.isClosed()) {
                 socket.close();

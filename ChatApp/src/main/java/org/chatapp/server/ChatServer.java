@@ -17,6 +17,7 @@ public class ChatServer extends Thread {
         this.onMessageReceived = onMessageReceived;
         this.clients = new ArrayList<>();
         this.running = true;
+        setDaemon(true); // Marchez ca daemon thread pentru a permite terminarea aplicatiei
     }
 
     @Override

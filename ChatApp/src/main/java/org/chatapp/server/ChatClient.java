@@ -15,6 +15,7 @@ public class ChatClient extends Thread {
             throws IOException {
         this.onMessageReceived = onMessageReceived;
         this.running = true;
+        setDaemon(true); // Marchez ca daemon thread pentru a permite terminarea aplicatiei
 
         socket = new Socket(serverIP, serverPort);
         in = new BufferedReader(new InputStreamReader(socket.getInputStream()));

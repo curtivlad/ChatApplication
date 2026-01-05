@@ -288,18 +288,37 @@ public class ChatApplication extends Application {
     }
 
     private void cleanup() {
-        if (udpListener != null) {
-            udpListener.stopListening();
+        System.out.println("Cleaning up resources...");
+
+        try {
+            if (udpListener != null) {
+                udpListener.stopListening();
+                // Așteaptă thread-ul să se termine cu timeout
+                udpListener.join(2000);
+            }
+        } catch (InterruptedException e) {
+            System.err.println("Error waiting for UDP listener: " + e.getMessage());
         }
-        if (udpBroadcaster != null) {
-            udpBroadcaster.stopBroadcasting();
+
+        try {
+            if (udpBroadcaster != null) {
+                udpBroadcaster.stopBroadcasting();
+                // Așteaptă thread-ul să se termine cu timeout
+                udpBroadcaster.join(2000);
+            }
+        } catch (InterruptedException e) {
+            System.err.println("Error waiting for UDP broadcaster: " + e.getMessage());
         }
+
         if (chatServer != null) {
             chatServer.stopServer();
         }
+
         if (chatClient != null) {
             chatClient.disconnect();
         }
+
+        System.out.println("Cleanup completed");
     }
 
     public static void main(String[] args) {
