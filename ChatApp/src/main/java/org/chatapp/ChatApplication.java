@@ -466,7 +466,22 @@ public class ChatApplication extends Application {
         clientListView.setPlaceholder(new Label("No users"));
         VBox.setVgrow(clientListView, Priority.ALWAYS);
 
-        leftPanel.getChildren().addAll(clientsLabel, clientCountLabel, clientListView);
+        // Leave Room button
+        Button leaveRoomButton = new Button("🚪 Leave Room");
+        leaveRoomButton.setStyle("-fx-background-color: #f44336; -fx-text-fill: white; " +
+                "-fx-font-size: 12px; -fx-padding: 8px 15px; " +
+                "-fx-background-radius: 5; -fx-cursor: hand;");
+        leaveRoomButton.setMaxWidth(Double.MAX_VALUE);
+        leaveRoomButton.setOnAction(e -> leaveRoom());
+
+        leaveRoomButton.setOnMouseEntered(e ->
+                leaveRoomButton.setStyle(leaveRoomButton.getStyle() + "-fx-opacity: 0.8;")
+        );
+        leaveRoomButton.setOnMouseExited(e ->
+                leaveRoomButton.setStyle(leaveRoomButton.getStyle().replace("-fx-opacity: 0.8;", ""))
+        );
+
+        leftPanel.getChildren().addAll(clientsLabel, clientCountLabel, clientListView, leaveRoomButton);
 
         // Center panel - Chat
         VBox centerPanel = new VBox(10);
@@ -574,7 +589,8 @@ public class ChatApplication extends Application {
                         // Nu afișăm mesajele speciale în chat
                         if (!message.startsWith("USERLIST:") &&
                                 !message.startsWith("USER_JOINED:") &&
-                                !message.startsWith("USER_LEFT:")) {
+                                !message.startsWith("USER_LEFT:") &&
+                                !message.startsWith("ROOM_CLOSED:")) {
                             appendMessage(message);
                         }
                     })
@@ -658,9 +674,13 @@ public class ChatApplication extends Application {
      * Trimite lista de utilizatori către toți clienții conectați.
      */
     private void broadcastUserList() {
-        if (chatServer == null) return;
+        if (chatServer == null) {
+            System.out.println("[broadcastUserList] chatServer is null, skipping");
+            return;
+        }
 
         List<String> clients = chatServer.getConnectedClients();
+        System.out.println("[broadcastUserList] Got clients from server: " + clients);
 
         // Construim lista: host + clienți
         StringBuilder userList = new StringBuilder();
@@ -672,9 +692,10 @@ public class ChatApplication extends Application {
 
         // Trimitem lista către toți clienții (nu către host)
         String message = "USERLIST:" + userList.toString();
+        System.out.println("[broadcastUserList] Broadcasting: " + message);
         chatServer.broadcastMessage(message);
 
-        System.out.println("Broadcasting user list: " + userList);
+        System.out.println("[broadcastUserList] Complete!");
     }
 
     private void startRoomDiscovery() {
@@ -739,9 +760,10 @@ public class ChatApplication extends Application {
                         selectedRoom.getHostIP(),
                         selectedRoom.getTcpPort(),
                         message -> Platform.runLater(() -> {
-                            appendMessage(message);
-                            // Actualizează lista de utilizatori când primim mesaje speciale
+                            // IMPORTANT: Procesăm mesajele speciale ÎNAINTE de append
+                            // Altfel ROOM_CLOSED e filtrat și nu ajunge la handler
                             updateClientListFromMessage(message);
+                            appendMessage(message);
                         })
                 );
 
@@ -784,49 +806,204 @@ public class ChatApplication extends Application {
      * Actualizează lista de clienți din mesajele speciale primite.
      */
     private void updateClientListFromMessage(String message) {
+        System.out.println("[updateClientListFromMessage] Processing: '" + message + "'");
+
+        // Format: ROOM_CLOSED:reason
+        if (message.startsWith("ROOM_CLOSED:")) {
+            String reason = message.substring("ROOM_CLOSED:".length());
+            System.out.println("[updateClientListFromMessage] ⚠️ ROOM CLOSED DETECTED!");
+            System.out.println("[updateClientListFromMessage] Reason: " + reason);
+
+            // Deconectare automată și notificare
+            Platform.runLater(() -> {
+                System.out.println("[updateClientListFromMessage] Running cleanup in UI thread...");
+
+                // Cleanup imediat
+                if (chatClient != null) {
+                    try {
+                        System.out.println("[updateClientListFromMessage] Disconnecting client...");
+                        chatClient.disconnect();
+                        chatClient = null;
+                        System.out.println("[updateClientListFromMessage] ✓ Client disconnected");
+                    } catch (Exception e) {
+                        System.err.println("[updateClientListFromMessage] Error disconnecting: " + e.getMessage());
+                    }
+                }
+
+                // Curăță UI
+                System.out.println("[updateClientListFromMessage] Clearing UI...");
+                chatArea.clear();
+                messageField.clear();
+                clientListView.getItems().clear();
+                clientCountLabel.setText("0 users");
+                statusLabel.setText("Disconnected");
+
+                // Afișează dialog informativ
+                System.out.println("[updateClientListFromMessage] Showing dialog to user...");
+                Alert alert = new Alert(Alert.AlertType.WARNING);
+                alert.setTitle("Room Closed");
+                alert.setHeaderText("The chat room has been closed");
+                alert.setContentText(reason);
+                alert.showAndWait();
+
+                // Revino la welcome screen
+                System.out.println("[updateClientListFromMessage] Returning to welcome screen...");
+                primaryStage.setScene(welcomeScene);
+                System.out.println("[updateClientListFromMessage] ✓✓✓ Returned to welcome screen after room closure");
+            });
+            return; // Nu procesăm mai departe
+        }
+
         // Format: USERLIST:user1 (Host),user2,user3
         if (message.startsWith("USERLIST:")) {
             String userListStr = message.substring("USERLIST:".length());
+            System.out.println("[updateClientListFromMessage] User list string: '" + userListStr + "'");
 
             if (userListStr.trim().isEmpty()) {
+                System.out.println("[updateClientListFromMessage] User list is empty, returning");
                 return;
             }
 
             String[] users = userListStr.split(",");
+            System.out.println("[updateClientListFromMessage] Split into " + users.length + " users");
 
             Platform.runLater(() -> {
                 clientListView.getItems().clear();
-                for (String user : users) {
-                    user = user.trim();
+                System.out.println("[updateClientListFromMessage] Cleared client list view");
+
+                for (int i = 0; i < users.length; i++) {
+                    String user = users[i].trim();
+                    System.out.println("[updateClientListFromMessage] Adding user[" + i + "]: '" + user + "'");
                     if (!user.isEmpty()) {
                         clientListView.getItems().add(user);
                     }
                 }
-                clientCountLabel.setText(users.length + " user" + (users.length != 1 ? "s" : ""));
-                System.out.println("Updated client list: " + users.length + " users");
+
+                int count = clientListView.getItems().size();
+                clientCountLabel.setText(count + " user" + (count != 1 ? "s" : ""));
+                System.out.println("[updateClientListFromMessage] ✓ Final list: " + clientListView.getItems());
             });
         }
         // Format: USER_JOINED:username
         else if (message.startsWith("USER_JOINED:")) {
             String newUser = message.substring("USER_JOINED:".length()).trim();
+            System.out.println("[updateClientListFromMessage] User joined: " + newUser);
             Platform.runLater(() -> {
                 if (!clientListView.getItems().contains(newUser)) {
                     clientListView.getItems().add(newUser);
                     clientCountLabel.setText(clientListView.getItems().size() + " user" +
                             (clientListView.getItems().size() != 1 ? "s" : ""));
-                    System.out.println("User joined: " + newUser);
+                    System.out.println("[updateClientListFromMessage] Added, now: " + clientListView.getItems());
                 }
             });
         }
         // Format: USER_LEFT:username
         else if (message.startsWith("USER_LEFT:")) {
             String leftUser = message.substring("USER_LEFT:".length()).trim();
+            System.out.println("[updateClientListFromMessage] User left: " + leftUser);
             Platform.runLater(() -> {
                 clientListView.getItems().remove(leftUser);
                 clientCountLabel.setText(clientListView.getItems().size() + " user" +
                         (clientListView.getItems().size() != 1 ? "s" : ""));
-                System.out.println("User left: " + leftUser);
+                System.out.println("[updateClientListFromMessage] Removed, now: " + clientListView.getItems());
             });
+        }
+    }
+
+    /**
+     * Părăsește camera de chat curentă și revine la welcome screen.
+     */
+    private void leaveRoom() {
+        // Dialog de confirmare
+        Alert confirmDialog = new Alert(Alert.AlertType.CONFIRMATION);
+        confirmDialog.setTitle("Leave Room");
+        confirmDialog.setHeaderText("Are you sure you want to leave this room?");
+
+        if (chatServer != null) {
+            // Mesaj special pentru host
+            confirmDialog.setContentText("You are the host. Leaving will close the room for all users.");
+        } else {
+            confirmDialog.setContentText("You will be disconnected from the chat.");
+        }
+
+        Optional<ButtonType> result = confirmDialog.showAndWait();
+        if (result.isPresent() && result.get() == ButtonType.OK) {
+            System.out.println("[leaveRoom] User confirmed, leaving room...");
+
+            // Cleanup pentru HOST
+            if (chatServer != null) {
+                System.out.println("[leaveRoom] Host is leaving, closing room for all clients...");
+
+                // Păstrăm referință locală pentru thread
+                final ChatServer serverToClose = chatServer;
+                chatServer = null; // Setăm null acum pentru că nu mai e activ
+
+                // Trimite mesaj special de închidere către TOȚI clienții
+                // Acest mesaj va trigger automat deconectarea lor
+                new Thread(() -> {
+                    try {
+                        System.out.println("[leaveRoom] Broadcasting ROOM_CLOSED...");
+                        serverToClose.broadcastMessage("ROOM_CLOSED:The host has left the room");
+                        System.out.println("[leaveRoom] ✓ Sent ROOM_CLOSED message to all clients");
+
+                        // Așteaptă ca mesajul să ajungă la clienți
+                        Thread.sleep(500);
+
+                        // Acum oprește serverul
+                        System.out.println("[leaveRoom] Stopping server...");
+                        serverToClose.stopServer();
+                        System.out.println("[leaveRoom] ✓ Chat server stopped");
+
+                    } catch (Exception e) {
+                        System.err.println("[leaveRoom] Error during host cleanup: " + e.getMessage());
+                        e.printStackTrace();
+                    }
+                }).start();
+
+                // Dezînregistrează camera din registry
+                if (registryClient != null && assignedTcpPort > 0) {
+                    try {
+                        String hostIP = InetAddress.getLocalHost().getHostAddress();
+                        registryClient.unregisterRoom(hostIP, assignedTcpPort);
+                        System.out.println("[leaveRoom] Unregistered room from registry");
+                    } catch (Exception e) {
+                        System.err.println("[leaveRoom] Error unregistering room: " + e.getMessage());
+                    }
+                }
+            }
+
+            // Cleanup pentru CLIENT
+            if (chatClient != null) {
+                System.out.println("[leaveRoom] Client leaving room...");
+                try {
+                    // Trimite mesaj de plecare
+                    chatClient.sendMessage(userName + " has left the chat");
+                    Thread.sleep(100); // Scurt delay pentru mesaj
+
+                    // Deconectare
+                    chatClient.disconnect();
+                    chatClient = null;
+                    System.out.println("[leaveRoom] Client disconnected");
+                } catch (Exception e) {
+                    System.err.println("[leaveRoom] Error during client cleanup: " + e.getMessage());
+                }
+            }
+
+            // Curăță UI - IMEDIAT, fără Thread.sleep care blochează UI
+            Platform.runLater(() -> {
+                chatArea.clear();
+                messageField.clear();
+                clientListView.getItems().clear();
+                clientCountLabel.setText("0 users");
+                statusLabel.setText("Ready");
+
+                // Revino la welcome screen
+                primaryStage.setScene(welcomeScene);
+                System.out.println("[leaveRoom] ✓ Returned to welcome screen");
+            });
+
+        } else {
+            System.out.println("[leaveRoom] User cancelled");
         }
     }
 
@@ -849,7 +1026,8 @@ public class ChatApplication extends Application {
         // Nu afișăm mesajele speciale de protocol în chat
         if (message.startsWith("USERLIST:") ||
                 message.startsWith("USER_JOINED:") ||
-                message.startsWith("USER_LEFT:")) {
+                message.startsWith("USER_LEFT:") ||
+                message.startsWith("ROOM_CLOSED:")) {
             return;
         }
         chatArea.appendText(message + "\n");
