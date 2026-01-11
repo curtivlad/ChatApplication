@@ -1,4 +1,4 @@
-package org.chatapp.entieties;
+package org.chatapp.entities;
 
 import java.net.*;
 import java.io.IOException;
